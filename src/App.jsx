@@ -103,6 +103,46 @@ function App() {
   // Chat history
   const [chatHistory, setChatHistory] = useState([]);
 
+  // Local Audit Logs
+  const [auditLogs, setAuditLogs] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('promptshield_audit_logs') || '[]');
+    } catch (e) {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('promptshield_audit_logs', JSON.stringify(auditLogs));
+  }, [auditLogs]);
+
+  const addAuditLog = (originalText, optimizedText, sourceAction) => {
+    const originalTokens = originalText ? encode(originalText).length : 0;
+    const optimizedTokens = optimizedText ? encode(optimizedText).length : 0;
+    const savings = Math.max(0, originalTokens - optimizedTokens);
+    const savingsINR = calculateSavings(originalTokens, optimizedTokens, currentModel);
+    
+    const scanResult = securityEnabled
+      ? scanAndRedact(originalText, activeDetectors, customKeywords, redactionStrategy, advancedEntropy)
+      : { matches: [] };
+
+    const newLog = {
+      id: Date.now(),
+      timestamp: new Date().toLocaleTimeString() + ' ' + new Date().toLocaleDateString(),
+      originalText,
+      optimizedText,
+      originalTokens,
+      optimizedTokens,
+      savings,
+      savingsINR,
+      secretsBlocked: scanResult.matches.length,
+      action: sourceAction,
+      modelName: currentModel.name
+    };
+
+    setAuditLogs(prev => [newLog, ...prev]);
+  };
+
   // Matrix console overlay state
   const [showTerminal, setShowTerminal] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState([]);
@@ -269,16 +309,24 @@ function App() {
     if (!optimizedText || isBlocked) return;
     navigator.clipboard.writeText(optimizedText);
     setCopied(true);
+    addAuditLog(inputText, optimizedText, 'Copied');
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleSendPrompt = async () => {
     if (!optimizedText.trim() || isBlocked) return;
 
-    const userMessage = { role: 'user', content: optimizedText };
+    const userMessage = { 
+      role: 'user', 
+      content: optimizedText,
+      rawContent: inputText,
+      showRaw: false
+    };
     setChatHistory(prev => [...prev, userMessage]);
 
     const activeApiKey = keys[provider];
+    
+    addAuditLog(inputText, optimizedText, 'Sandbox Run');
 
     await runCyberPipeline(async () => {
       let responseText = '';
@@ -297,7 +345,12 @@ function App() {
         finalResponse = rehydrateText(responseText, sessionSalts);
       }
 
-      setChatHistory(prev => [...prev, { role: 'assistant', content: finalResponse }]);
+      setChatHistory(prev => [...prev, { 
+        role: 'assistant', 
+        content: finalResponse,
+        sanitizedContent: responseText,
+        showSanitized: false
+      }]);
       setCumulativeSavings(prev => prev + currentPromptSavings);
       setLifetimeQueries(prev => prev + 1);
       if (securityReport.matches.length > 0) {
@@ -409,6 +462,14 @@ function App() {
             >
               <KeyRound size={18} />
               <span>API Integration Hub</span>
+            </div>
+
+            <div 
+              className={`sidebar-item ${activeScreen === 'logs' ? 'active' : ''}`}
+              onClick={() => setActiveScreen('logs')}
+            >
+              <Fingerprint size={18} />
+              <span>Audit Trail (Logs)</span>
             </div>
           </div>
 
@@ -706,14 +767,73 @@ function App() {
                               <p style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>Prompt rehydrates keys locally in memory.</p>
                             </div>
                           ) : (
-                            chatHistory.map((m, i) => (
-                              <div key={i} className={`chat-bubble ${m.role}`}>
-                                <div style={{ fontSize: '0.7rem', fontWeight: 600, marginBottom: '0.2rem', color: m.role === 'user' ? 'var(--accent-cyan)' : 'var(--accent-purple)' }}>
-                                  {m.role === 'user' ? 'Optimized User' : currentModel.name}
+                            chatHistory.map((m, idx) => {
+                              const isUser = m.role === 'user';
+                              return (
+                                <div key={idx} className={`chat-bubble ${m.role}`} style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: 600, color: isUser ? 'var(--accent-cyan)' : 'var(--accent-purple)' }}>
+                                      {isUser ? 'User Prompt' : currentModel.name}
+                                    </span>
+                                    
+                                    {/* Tab toggle control inside bubble */}
+                                    <div style={{ display: 'flex', gap: '2px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--panel-border)', borderRadius: '4px', padding: '1px' }}>
+                                      {isUser ? (
+                                        <>
+                                          <button 
+                                            style={{ background: !m.showRaw ? 'rgba(0, 242, 254, 0.1)' : 'none', border: 'none', color: !m.showRaw ? 'var(--accent-cyan)' : 'var(--text-secondary)', fontSize: '0.65rem', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer' }}
+                                            onClick={() => {
+                                              setChatHistory(prev => prev.map((item, idx2) => idx2 === idx ? { ...item, showRaw: false } : item));
+                                            }}
+                                          >
+                                            🔒 Sanitized (LLM View)
+                                          </button>
+                                          <button 
+                                            style={{ background: m.showRaw ? 'rgba(255, 255, 255, 0.05)' : 'none', border: 'none', color: m.showRaw ? 'var(--text-primary)' : 'var(--text-secondary)', fontSize: '0.65rem', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer' }}
+                                            onClick={() => {
+                                              setChatHistory(prev => prev.map((item, idx2) => idx2 === idx ? { ...item, showRaw: true } : item));
+                                            }}
+                                          >
+                                            📄 Original
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <button 
+                                            style={{ background: !m.showSanitized ? 'rgba(57, 255, 20, 0.1)' : 'none', border: 'none', color: !m.showSanitized ? 'var(--accent-green)' : 'var(--text-secondary)', fontSize: '0.65rem', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer' }}
+                                            onClick={() => {
+                                              setChatHistory(prev => prev.map((item, idx2) => idx2 === idx ? { ...item, showSanitized: false } : item));
+                                            }}
+                                          >
+                                            🔓 Rehydrated (RAM Local)
+                                          </button>
+                                          <button 
+                                            style={{ background: m.showSanitized ? 'rgba(255, 255, 255, 0.05)' : 'none', border: 'none', color: m.showSanitized ? 'var(--text-primary)' : 'var(--text-secondary)', fontSize: '0.65rem', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer' }}
+                                            onClick={() => {
+                                              setChatHistory(prev => prev.map((item, idx2) => idx2 === idx ? { ...item, showSanitized: true } : item));
+                                            }}
+                                          >
+                                            🔒 Raw Received
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div style={{ 
+                                    whiteSpace: 'pre-wrap', 
+                                    fontSize: '0.8rem', 
+                                    lineHeight: 1.4,
+                                    color: (isUser && !m.showRaw) || (!isUser && m.showSanitized) ? 'var(--text-secondary)' : 'var(--text-primary)'
+                                  }}>
+                                    {isUser 
+                                      ? (m.showRaw ? m.rawContent : m.content) 
+                                      : (m.showSanitized ? m.sanitizedContent : m.content)
+                                    }
+                                  </div>
                                 </div>
-                                <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
-                              </div>
-                            ))
+                              );
+                            })
                           )}
                         </div>
 
@@ -1060,6 +1180,104 @@ function App() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeScreen === 'logs' && (
+            <div className="glass-box" style={{ gap: '1.5rem' }}>
+              <div className="glass-box-header">
+                <h2 className="glass-box-title"><Fingerprint size={20} color="var(--accent-purple)" /> Audit Trail & Local Logs</h2>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  {auditLogs.length > 0 && (
+                    <button className="btn" onClick={() => setAuditLogs([])} style={{ color: '#ff5252', padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}>
+                      <Trash2 size={12} /> Clear Logs
+                    </button>
+                  )}
+                  <span className="badge-info">{auditLogs.length} Records</span>
+                </div>
+              </div>
+
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.4, margin: 0 }}>
+                PromptShield tracks optimizations strictly locally in your browser storage. This data is never sent to any remote server and serves as your private local compliance logs.
+              </p>
+
+              {auditLogs.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '220px', border: '1px dashed var(--panel-border)', borderRadius: '10px', color: 'var(--text-secondary)' }}>
+                  <Fingerprint size={32} style={{ marginBottom: '0.5rem', opacity: 0.5, color: 'var(--accent-purple)' }} />
+                  <span style={{ fontSize: '0.85rem' }}>No logged actions found. Optimize a prompt to start recording logs.</span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '550px', overflowY: 'auto' }} className="custom-scrollbar">
+                  {auditLogs.map((log) => (
+                    <div key={log.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--panel-border)', padding: '1rem', borderRadius: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{log.timestamp}</span>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <span style={{ 
+                            fontSize: '0.65rem', 
+                            padding: '0.1rem 0.4rem', 
+                            borderRadius: '4px', 
+                            background: log.action === 'Copied' ? 'rgba(0, 242, 254, 0.12)' : 'rgba(57, 255, 20, 0.12)',
+                            color: log.action === 'Copied' ? 'var(--accent-cyan)' : 'var(--accent-green)',
+                            fontWeight: 600
+                          }}>
+                            {log.action.toUpperCase()}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>{log.modelName}</span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '0.5rem', margin: '0.25rem 0', padding: '0.5rem', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--panel-border)', borderRadius: '6px', fontSize: '0.75rem' }}>
+                        <div>
+                          <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '0.65rem', marginBottom: '2px' }}>Original Size</span>
+                          <span style={{ fontWeight: 500 }}>{log.originalTokens} tokens</span>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '0.65rem', marginBottom: '2px' }}>Optimized Size</span>
+                          <span style={{ color: 'var(--accent-cyan)', fontWeight: 500 }}>{log.optimizedTokens} tokens</span>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '0.65rem', marginBottom: '2px' }}>Deflation</span>
+                          <span style={{ color: 'var(--accent-purple)', fontWeight: 600 }}>
+                            {log.originalTokens > 0 ? Math.round(((log.originalTokens - log.optimizedTokens) / log.originalTokens) * 100) : 0}%
+                          </span>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '0.65rem', marginBottom: '2px' }}>INR Saved</span>
+                          <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>₹{log.savingsINR.toFixed(4)}</span>
+                        </div>
+                      </div>
+
+                      {log.secretsBlocked > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.7rem', color: 'var(--accent-green)', background: 'rgba(57,255,20,0.03)', padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid rgba(57,255,20,0.1)' }}>
+                          <ShieldCheck size={12} />
+                          <span>Neutralized {log.secretsBlocked} PII / secret leak{log.secretsBlocked > 1 ? 's' : ''} during scan</span>
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '0.5rem' }}>
+                        <button 
+                          className="btn" 
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', flex: 1 }}
+                          onClick={() => {
+                            setInputText(log.originalText);
+                            setActiveScreen('optimizer');
+                          }}
+                        >
+                          Restore in Editor
+                        </button>
+                        <button 
+                          className="btn" 
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', color: '#ff5252' }}
+                          onClick={() => setAuditLogs(prev => prev.filter(item => item.id !== log.id))}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
