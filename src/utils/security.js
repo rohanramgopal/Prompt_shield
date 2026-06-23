@@ -133,37 +133,79 @@ export const DETECTORS = {
   
     // 2. Shannon Entropy zero-day credential scanner (finds high-entropy random strings)
     if (advancedEntropy) {
-      // Split text by common delimiters including colons, equals, hashes, slashes, etc.
-      const words = text.split(/[\s,.;:!?()"{}\[\]<>=/\\@#\$%\^&\*\+~|]+/);
-      words.forEach(word => {
-        const cleanWord = word.trim();
-        // Zero-day passwords or keys of length >= 12 can contain numbers, letters, underscores, and dashes
-        if (cleanWord.length >= 12 && /^[a-zA-Z0-9_\-\+\/=]{12,64}$/.test(cleanWord)) {
-          // Calculate Shannon entropy
-          const entropy = calculateEntropy(cleanWord);
-          // Scale threshold based on length to catch shorter/medium password strings
-          const threshold = cleanWord.length >= 16 ? 4.2 : 3.6;
-          if (entropy >= threshold) {
-            // Check if this was already captured by regex
-            const alreadyMatched = matches.some(m => m.value.includes(cleanWord) || cleanWord.includes(m.value));
-            if (!alreadyMatched) {
-              matches.push({
-                type: `High-Entropy Secret (Score: ${entropy.toFixed(2)})`,
-                value: cleanWord,
-                index: text.indexOf(cleanWord)
-              });
+      // Match potential tokens (words containing letters, digits, and secret-common symbols)
+      const tokenRegex = /[a-zA-Z0-9_\-\+\/=.#@$%!^*~]+/g;
+      let tokenMatch;
+      
+      while ((tokenMatch = tokenRegex.exec(text)) !== null) {
+        let candidate = tokenMatch[0];
+        
+        // Trim surrounding structural punctuation (quotes, brackets, parens, commas, colons, semicolons)
+        candidate = candidate.replace(/^["'([{<,.:;]+|["'([{<,.:;]+$/g, '');
+        
+        if (candidate.length < 8) continue;
   
-              if (strategy === 'purge') {
-                cleanedText = cleanedText.replace(new RegExp(cleanWord.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), '');
-              } else {
-                const salt = `[SALT_TOKEN_${saltCounter++}_HIGH_ENTROPY]`;
-                saltMap[salt] = cleanWord;
-                cleanedText = cleanedText.replace(new RegExp(cleanWord.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), salt);
-              }
+        // Determine properties of the candidate string
+        const isHex = /^[0-9a-fA-F]+$/.test(candidate);
+        const hasNumber = /[0-9]/.test(candidate);
+        const hasUpper = /[A-Z]/.test(candidate);
+        const hasLower = /[a-z]/.test(candidate);
+        const hasSpecial = /[^a-zA-Z0-9]/.test(candidate);
+        
+        // Calculate Shannon entropy
+        const entropy = calculateEntropy(candidate);
+        
+        let isSecret = false;
+        let reason = '';
+  
+        // Heuristics for different key formats and alphabets
+        if (isHex && candidate.length >= 16) {
+          // Hexadecimal secrets (e.g. MD5/SHA hashes, API secret components). Max entropy is 4.0.
+          if (entropy >= 3.0) {
+            isSecret = true;
+            reason = `Hex Secret Key (Entropy: ${entropy.toFixed(2)})`;
+          }
+        } else if (candidate.length >= 12) {
+          // General secrets: passwords, API keys, database connection strings.
+          // Look for variety in character classes to filter out normal dictionary words (like 'recommendations')
+          const charTypesCount = (hasNumber ? 1 : 0) + (hasUpper ? 1 : 0) + (hasLower ? 1 : 0) + (hasSpecial ? 1 : 0);
+          
+          if (charTypesCount >= 2) {
+            // Mixed character sets (e.g. alphanumeric or alphanumeric + symbols)
+            const threshold = candidate.length >= 16 ? 3.2 : 3.4;
+            if (entropy >= threshold) {
+              isSecret = true;
+              reason = `High-Entropy Secret (Entropy: ${entropy.toFixed(2)})`;
+            }
+          } else if (candidate.length >= 16) {
+            // Single character class strings (e.g. pure lowercase) need higher entropy to trigger
+            if (entropy >= 4.2) {
+              isSecret = true;
+              reason = `High-Entropy Token (Entropy: ${entropy.toFixed(2)})`;
             }
           }
         }
-      });
+  
+        if (isSecret) {
+          // Check if this was already captured by regex
+          const alreadyMatched = matches.some(m => m.value.includes(candidate) || candidate.includes(m.value));
+          if (!alreadyMatched) {
+            matches.push({
+              type: reason,
+              value: candidate,
+              index: tokenMatch.index + tokenMatch[0].indexOf(candidate)
+            });
+  
+            if (strategy === 'purge') {
+              cleanedText = cleanedText.replace(new RegExp(candidate.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), '');
+            } else {
+              const salt = `[SALT_TOKEN_${saltCounter++}_HIGH_ENTROPY]`;
+              saltMap[salt] = candidate;
+              cleanedText = cleanedText.replace(new RegExp(candidate.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), salt);
+            }
+          }
+        }
+      }
     }
   
     // 3. Run custom keywords redactor
