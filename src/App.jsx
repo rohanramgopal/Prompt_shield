@@ -27,6 +27,7 @@ import {
   HeartHandshake
 } from 'lucide-react';
 import { optimizeText } from './utils/optimizer';
+import { analyzePromptIntent } from './utils/recommender';
 import { MODELS, calculateSavings, generateMockResponse } from './utils/pricing';
 import { sendPromptToAI } from './utils/apiService';
 import { scanAndRedact, rehydrateText, DETECTORS } from './utils/security';
@@ -71,7 +72,8 @@ function App() {
     condenseWhitespace: true,
     removeFillers: true,
     shrinkPunctuation: true,
-    minifyJson: false
+    minifyJson: false,
+    minifyCode: true
   });
 
   // Security guard states (PromptShield)
@@ -116,6 +118,8 @@ function App() {
   const securityReport = securityEnabled
     ? scanAndRedact(inputText, activeDetectors, customKeywords, redactionStrategy, advancedEntropy)
     : { matches: [], cleanedText: inputText, saltMap: {} };
+
+  const recommendation = analyzePromptIntent(inputText);
 
   const isBlocked = securityEnabled && redactionStrategy === 'block' && securityReport.matches.length > 0;
 
@@ -499,6 +503,50 @@ function App() {
                 </div>
               </section>
 
+              {/* AI Recommendation Banner */}
+              {inputText.trim().length > 5 && recommendation.recommendations.length > 0 && (
+                <div className="glass-box" style={{ padding: '0.85rem 1.25rem', marginBottom: '1rem', border: '1px solid rgba(0, 242, 254, 0.25)', display: 'flex', flexDirection: 'column', gap: '0.5rem', background: 'rgba(0, 242, 254, 0.04)', borderRadius: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Sparkles size={16} color="var(--accent-cyan)" />
+                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        Recommended Model: <span style={{ color: 'var(--accent-cyan)', textShadow: '0 0 8px rgba(0, 242, 254, 0.3)' }}>{recommendation.recommendations[0].name}</span> ({recommendation.recommendations[0].matchPercent}% Match)
+                      </span>
+                    </div>
+                    {(provider !== recommendation.recommendations[0].provider || modelId !== recommendation.recommendations[0].id) && (
+                      <button 
+                        className="btn btn-cyan"
+                        style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', borderRadius: '4px' }}
+                        onClick={() => {
+                          const best = recommendation.recommendations[0];
+                          setProvider(best.provider);
+                          setModelId(best.id);
+                        }}
+                      >
+                        Apply Recommended Node
+                      </button>
+                    )}
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.4', margin: 0 }}>
+                    {recommendation.rationale}
+                  </p>
+                  
+                  {/* Detailed scores breakdown drawer */}
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '0.25rem', padding: '0.4rem 0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', border: '1px solid var(--panel-border)', overflowX: 'auto' }}>
+                    {recommendation.recommendations.slice(0, 3).map((rec, idx) => (
+                      <div key={rec.id} style={{ display: 'flex', flexDirection: 'column', fontSize: '0.7rem', minWidth: '120px' }}>
+                        <span style={{ fontWeight: 600, color: idx === 0 ? 'var(--accent-cyan)' : 'var(--text-primary)' }}>
+                          {idx === 0 ? '🏆 ' : ''}{rec.name}
+                        </span>
+                        <span style={{ color: 'var(--text-secondary)' }}>
+                          Match: {rec.matchPercent}% | Code: {rec.scores.coding}/10 | Cost: {rec.scores.cost}/10
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Editors */}
               <section className="editors-split">
                 <div className="glass-box">
@@ -584,8 +632,16 @@ function App() {
                       className={`opt-toggle ${options.minifyJson ? 'active' : ''}`}
                       onClick={() => setOptions(prev => ({ ...prev, minifyJson: !prev.minifyJson }))}
                     >
-                      <div className="opt-toggle-title">Minify Code/JSON</div>
+                      <div className="opt-toggle-title">Minify JSON Structure</div>
                       <input type="checkbox" checked={options.minifyJson} readOnly style={{ display: 'none' }} />
+                    </div>
+
+                    <div 
+                      className={`opt-toggle ${options.minifyCode ? 'active' : ''}`}
+                      onClick={() => setOptions(prev => ({ ...prev, minifyCode: !prev.minifyCode }))}
+                    >
+                      <div className="opt-toggle-title">Minify Code Comments</div>
+                      <input type="checkbox" checked={options.minifyCode} readOnly style={{ display: 'none' }} />
                     </div>
                   </div>
                 </div>
