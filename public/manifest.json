@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "PromptShield Extension",
+  "version": "3.0",
+  "description": "Scrub credentials, tokens, and PII from reaching AI prompts via Shannon entropy.",
+  "permissions": [
+    "sidePanel",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Open PromptShield"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "128": "icon128.png"
+  }
+}
+
