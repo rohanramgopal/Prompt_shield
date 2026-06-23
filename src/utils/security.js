@@ -55,113 +55,119 @@ export const DETECTORS = {
     regex: /\bsk-ant-[a-zA-Z0-9-_]{32,64}\b/g,
     placeholder: '[DEHYDRATED_ANTHROPIC_KEY]'
   },
-  gcpServiceAccount: {
-    name: 'GCP Service Account Credential',
-    regex: /"type":\s*"service_account"|"project_id":\s*"[^"]*"|"private_key_id":\s*"[^"]*"/gi,
-    placeholder: '[DEHYDRATED_GCP_CREDENTIAL]'
-  }
-};
-
-/**
- * Calculates Shannon Entropy of a string to measure randomness/information density
- * @param {string} str Input string
- * @returns {number} Entropy value
- */
-export const calculateEntropy = (str) => {
-  if (!str) return 0;
-  const len = str.length;
-  const frequencies = {};
-  for (let i = 0; i < len; i++) {
-    const char = str[i];
-    frequencies[char] = (frequencies[char] || 0) + 1;
-  }
-  let entropy = 0;
-  Object.keys(frequencies).forEach(char => {
-    const p = frequencies[char] / len;
-    entropy -= p * Math.log2(p);
-  });
-  return entropy;
-};
-
-/**
- * Scans text for credentials and PII using regex and Shannon entropy
- * @param {string} text The input text
- * @param {object} activeDetectors Active configuration keys
- * @param {array} customKeywords User-defined custom words to redact
- * @param {string} strategy 'mask' | 'purge' | 'block'
- * @param {boolean} advancedEntropy Toggle for entropy-based detection
- * @returns {object} { matches: [{ type, value }], cleanedText, saltMap: { salt: val } }
- */
-export const scanAndRedact = (text, activeDetectors = {}, customKeywords = [], strategy = 'mask', advancedEntropy = true) => {
-  if (!text) return { matches: [], cleanedText: '', saltMap: {} };
-  
-  let cleanedText = text;
-  const matches = [];
-  const saltMap = {};
-  let saltCounter = 1;
-
-  // 1. Run standard regex detectors
-  Object.keys(DETECTORS).forEach(key => {
-    if (!activeDetectors[key]) return; // Skip if disabled
-    
-    const detector = DETECTORS[key];
-    let match;
-    const regexClone = new RegExp(detector.regex);
-    
-    while ((match = regexClone.exec(text)) !== null) {
-      const matchedVal = match[0];
-      matches.push({
-        type: detector.name,
-        value: matchedVal,
-        index: match.index
-      });
+    gcpServiceAccount: {
+      name: 'GCP Service Account Credential',
+      regex: /"type":\s*"service_account"|"project_id":\s*"[^"]*"|"private_key_id":\s*"[^"]*"/gi,
+      placeholder: '[DEHYDRATED_GCP_CREDENTIAL]'
+    },
+    genericPassword: {
+      name: 'Generic Password / Secret',
+      regex: /\b(password|passwd|secret|api_key|apikey|auth_token|token)\s*[:=]\s*([a-zA-Z0-9@#\$%\^&\*\(\)_\+\-\=\[\]\{\};':",\.\/<>?\|`~]{8,32})\b/gi,
+      placeholder: '[DEHYDRATED_PASSWORD]'
     }
-
-    // Replace matches with salted placeholders if masking, or empty if purging
-    cleanedText = cleanedText.replace(detector.regex, (matchedVal) => {
-      if (strategy === 'purge') return '';
-      const salt = `[SALT_TOKEN_${saltCounter++}_${key.toUpperCase()}]`;
-      saltMap[salt] = matchedVal;
-      return salt;
+  };
+  
+  /**
+   * Calculates Shannon Entropy of a string to measure randomness/information density
+   * @param {string} str Input string
+   * @returns {number} Entropy value
+   */
+  export const calculateEntropy = (str) => {
+    if (!str) return 0;
+    const len = str.length;
+    const frequencies = {};
+    for (let i = 0; i < len; i++) {
+      const char = str[i];
+      frequencies[char] = (frequencies[char] || 0) + 1;
+    }
+    let entropy = 0;
+    Object.keys(frequencies).forEach(char => {
+      const p = frequencies[char] / len;
+      entropy -= p * Math.log2(p);
     });
-  });
-
-  // 2. Shannon Entropy zero-day credential scanner (finds high-entropy random strings)
-  if (advancedEntropy) {
-    // Split text by spaces and punctuation to find word tokens
-    const words = text.split(/[\s,.;:!?()"{}\[\]<>]/);
-    words.forEach(word => {
-      // Clean word to evaluate potential raw keys (length >= 16 to avoid normal words, and contains letters/numbers)
-      const cleanWord = word.trim();
-      if (cleanWord.length >= 16 && /^[a-zA-Z0-9_-]+$/.test(cleanWord)) {
-        // Calculate Shannon entropy
-        const entropy = calculateEntropy(cleanWord);
-        // Typical high-entropy secret threshold (usually >= 4.3 for random strings)
-        if (entropy >= 4.3) {
-          // Check if this was already captured by regex
-          const alreadyMatched = matches.some(m => m.value.includes(cleanWord) || cleanWord.includes(m.value));
-          if (!alreadyMatched) {
-            matches.push({
-              type: `High-Entropy Secret (Score: ${entropy.toFixed(2)})`,
-              value: cleanWord,
-              index: text.indexOf(cleanWord)
-            });
-
-            if (strategy === 'purge') {
-              cleanedText = cleanedText.replace(new RegExp(cleanWord, 'g'), '');
-            } else {
-              const salt = `[SALT_TOKEN_${saltCounter++}_HIGH_ENTROPY]`;
-              saltMap[salt] = cleanWord;
-              cleanedText = cleanedText.replace(new RegExp(cleanWord, 'g'), salt);
+    return entropy;
+  };
+  
+  /**
+   * Scans text for credentials and PII using regex and Shannon entropy
+   * @param {string} text The input text
+   * @param {object} activeDetectors Active configuration keys
+   * @param {array} customKeywords User-defined custom words to redact
+   * @param {string} strategy 'mask' | 'purge' | 'block'
+   * @param {boolean} advancedEntropy Toggle for entropy-based detection
+   * @returns {object} { matches: [{ type, value }], cleanedText, saltMap: { salt: val } }
+   */
+  export const scanAndRedact = (text, activeDetectors = {}, customKeywords = [], strategy = 'mask', advancedEntropy = true) => {
+    if (!text) return { matches: [], cleanedText: '', saltMap: {} };
+    
+    let cleanedText = text;
+    const matches = [];
+    const saltMap = {};
+    let saltCounter = 1;
+  
+    // 1. Run standard regex detectors
+    Object.keys(DETECTORS).forEach(key => {
+      if (!activeDetectors[key]) return; // Skip if disabled
+      
+      const detector = DETECTORS[key];
+      let match;
+      const regexClone = new RegExp(detector.regex);
+      
+      while ((match = regexClone.exec(text)) !== null) {
+        const matchedVal = match[0];
+        matches.push({
+          type: detector.name,
+          value: matchedVal,
+          index: match.index
+        });
+      }
+  
+      // Replace matches with salted placeholders if masking, or empty if purging
+      cleanedText = cleanedText.replace(detector.regex, (matchedVal) => {
+        if (strategy === 'purge') return '';
+        const salt = `[SALT_TOKEN_${saltCounter++}_${key.toUpperCase()}]`;
+        saltMap[salt] = matchedVal;
+        return salt;
+      });
+    });
+  
+    // 2. Shannon Entropy zero-day credential scanner (finds high-entropy random strings)
+    if (advancedEntropy) {
+      // Split text by common delimiters including colons, equals, hashes, slashes, etc.
+      const words = text.split(/[\s,.;:!?()"{}\[\]<>=/\\@#\$%\^&\*\+~|]+/);
+      words.forEach(word => {
+        const cleanWord = word.trim();
+        // Zero-day passwords or keys of length >= 12 can contain numbers, letters, underscores, and dashes
+        if (cleanWord.length >= 12 && /^[a-zA-Z0-9_\-\+\/=]{12,64}$/.test(cleanWord)) {
+          // Calculate Shannon entropy
+          const entropy = calculateEntropy(cleanWord);
+          // Scale threshold based on length to catch shorter/medium password strings
+          const threshold = cleanWord.length >= 16 ? 4.2 : 3.6;
+          if (entropy >= threshold) {
+            // Check if this was already captured by regex
+            const alreadyMatched = matches.some(m => m.value.includes(cleanWord) || cleanWord.includes(m.value));
+            if (!alreadyMatched) {
+              matches.push({
+                type: `High-Entropy Secret (Score: ${entropy.toFixed(2)})`,
+                value: cleanWord,
+                index: text.indexOf(cleanWord)
+              });
+  
+              if (strategy === 'purge') {
+                cleanedText = cleanedText.replace(new RegExp(cleanWord.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), '');
+              } else {
+                const salt = `[SALT_TOKEN_${saltCounter++}_HIGH_ENTROPY]`;
+                saltMap[salt] = cleanWord;
+                cleanedText = cleanedText.replace(new RegExp(cleanWord.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), salt);
+              }
             }
           }
         }
-      }
-    });
-  }
-
-  // 3. Run custom keywords redactor
-  if (customKeywords && customKeywords.length > 0) {
+      });
+    }
+  
+    // 3. Run custom keywords redactor
+    if (customKeywords && customKeywords.length > 0) {
     customKeywords.forEach(word => {
       if (!word || word.trim() === '') return;
       const escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');

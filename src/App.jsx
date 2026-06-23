@@ -90,7 +90,8 @@ function App() {
     jwt: true,
     openaiKey: true,
     anthropicKey: true,
-    gcpServiceAccount: true
+    gcpServiceAccount: true,
+    genericPassword: true
   });
   const [customKeywordsInput, setCustomKeywordsInput] = useState('');
   const [redactionStrategy, setRedactionStrategy] = useState('mask'); // 'mask' | 'purge' | 'block'
@@ -566,7 +567,7 @@ function App() {
 
               {/* AI Recommendation Banner */}
               {inputText.trim().length > 5 && recommendation.recommendations.length > 0 && (
-                <div className="glass-box" style={{ padding: '0.85rem 1.25rem', marginBottom: '1rem', border: '1px solid rgba(0, 242, 254, 0.25)', display: 'flex', flexDirection: 'column', gap: '0.5rem', background: 'rgba(0, 242, 254, 0.04)', borderRadius: '10px' }}>
+                <div className="glass-box" style={{ flexShrink: 0, padding: '0.85rem 1.25rem', marginBottom: '1rem', border: '1px solid rgba(0, 242, 254, 0.25)', display: 'flex', flexDirection: 'column', gap: '0.5rem', background: 'rgba(0, 242, 254, 0.04)', borderRadius: '10px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <Sparkles size={16} color="var(--accent-cyan)" />
